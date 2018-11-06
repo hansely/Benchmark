@@ -6,12 +6,15 @@
 #include <chrono>
 #include <functional>
 #include <thread>
+#include <climits>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
 using namespace std;
 using namespace cv;
+
+#define BUFFER_SIZE INT_MAX
 
 inline int64_t clockCounter()
 {
@@ -49,31 +52,27 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
     char *buffer;
     long filelen;
     float avgtime=0;
+    float avgdecode=0;
     long totalbyte=0;
     int64_t freq = clockFrequency(), t0, t1, d0, d1;
     FILE *file;
     int totalsize = filenames.size();
-
     for (int i=0; i<count; i++) {
         long byteread = 0;
         float timetook = 0;
         float decodetook = 0;
-
+        buffer = (char *)malloc(BUFFER_SIZE);
         for (int j=0; j<totalsize; j++) {
+            //read
+            t0 = clockCounter();
             file = fopen(filenames[j].c_str(), "r");
             if (file==NULL) {
                 cout << "can't open" << filenames[j] << endl;
                 exit(-1);
             }
-            fseek(file, 0, SEEK_END);
-            filelen = ftell(file);
-            rewind(file);
-            buffer = (char *)malloc((filelen+1)*sizeof(char));
-
-            //read
-            t0 = clockCounter();
             byteread+=fread(buffer, 1, filelen, file);
             t1 = clockCounter();
+
             float readtime = (float)(t1-t0)*1000.0f/(float)freq;
             timetook+=readtime;
 
@@ -83,39 +82,47 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
             d1 = clockCounter();
             float decodetime= (float)(d1-d0)*1000.0f/(float)freq;
             decodetook+=decodetime;
-
-            free(buffer);
             fclose(file);
         }
-
+        free(buffer);
         if (show) {
             printf("Iteration %d\n", i+1);
-            // printf("Bytes read: %ld bytes\n", byteread);
-            // printf("--------------------------------\n");
-            // printf("Read\n");
-            // printf("--------------------------------\n");
-            // printf("Reading %d images took %.3f msec\n", totalsize, timetook);
-            // printf("Images per second: %ld images\n", (long)(1000/timetook*(float)totalsize));
-            // printf("Bytes per second: %ld bytes\n\n", (long)(1000*byteread/timetook));
-            // printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/timetook)/1000000);
+            printf("Bytes read: %ld bytes\n", byteread);
+            printf("--------------------------------\n");
+            printf("Read\n");
+            printf("--------------------------------\n");
+            printf("Reading %d images took %.3f msec\n", totalsize, timetook);
+            printf("Images per second: %ld images\n", (long)(1000/timetook*(float)totalsize));
+            printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/timetook));
+            printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/timetook)/1000000);
 
             printf("Decode\n");
             printf("--------------------------------\n");
             printf("Decoding %d images took %.3f msec\n", totalsize, decodetook);
             printf("Images per second: %ld images\n", (long)(1000/decodetook*(float)totalsize));
-            printf("Bytes per second: %ld bytes\n\n", (long)(1000*byteread/decodetook));
+            printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/decodetook));
             printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/decodetook)/1000000);
         }
-        avgtime+=decodetook;
+        avgtime+=timetook;
+        avgdecode+=decodetook;
         totalbyte+=byteread;
     }
     totalbyte/=count;
 
+    printf("Read\n");
+    printf("--------------------------------\n");
     printf("\nAverage speed per iteration: %.3f msec\n", avgtime/count);
     printf("Average bytes decoded per iteration: %ld bytes\n", totalbyte);
     printf("Images per second: %ld images\n", (long)(1000/avgtime*count*(float)totalsize));
     printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgtime*count));
     printf("MB per second: %.2ld bytes\n\n", (long)(1000*totalbyte/avgtime*count)/1000000);
+    printf("Decode\n");
+    printf("--------------------------------\n");
+    printf("\nAverage speed per iteration: %.3f msec\n", avgdecode/count);
+    printf("Average bytes decoded per iteration: %ld bytes\n", totalbyte);
+    printf("Images per second: %ld images\n", (long)(1000/avgdecode*count*(float)totalsize));
+    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgdecode*count));
+    printf("MB per second: %.2ld bytes\n\n", (long)(1000*totalbyte/avgdecode*count)/1000000);
 }
 
 template <typename T>
@@ -163,6 +170,5 @@ int main(int argc, char **argv)
     for (int i=0; i<cores; i++) {
         dec_threads[i].join();
     }
-    //benchmarkFile(filenames, count, show);
     return 0;
 }
