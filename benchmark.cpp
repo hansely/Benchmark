@@ -70,6 +70,9 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
                 cout << "can't open" << filenames[j] << endl;
                 exit(-1);
             }
+            fseek(file, 0, SEEK_END);
+            filelen = ftell(file);
+            rewind(file);
             byteread+=fread(buffer, 1, filelen, file);
             t1 = clockCounter();
 
@@ -78,7 +81,7 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
 
             //decode
             d0 = clockCounter();
-            decodeFile(filelen, buffer);
+            //decodeFile(filelen, buffer);
             d1 = clockCounter();
             float decodetime= (float)(d1-d0)*1000.0f/(float)freq;
             decodetook+=decodetime;
@@ -96,12 +99,12 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
             printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/timetook));
             printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/timetook)/1000000);
 
-            printf("Decode\n");
-            printf("--------------------------------\n");
-            printf("Decoding %d images took %.3f msec\n", totalsize, decodetook);
-            printf("Images per second: %ld images\n", (long)(1000/decodetook*(float)totalsize));
-            printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/decodetook));
-            printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/decodetook)/1000000);
+            // printf("Decode\n");
+            // printf("--------------------------------\n");
+            // printf("Decoding %d images took %.3f msec\n", totalsize, decodetook);
+            // printf("Images per second: %ld images\n", (long)(1000/decodetook*(float)totalsize));
+            // printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/decodetook));
+            // printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/decodetook)/1000000);
         }
         avgtime+=timetook;
         avgdecode+=decodetook;
@@ -160,15 +163,16 @@ int main(int argc, char **argv)
         }
     }
     filenames = glob(pat);
-    vector<vector<string>> split = splitVector(filenames, cores);
+    benchmarkFile(filenames, count, show);
+    // vector<vector<string>> split = splitVector(filenames, cores);
 
-    vector<thread> dec_threads(cores);
-    for (unsigned int i=0; i<cores; i++) {
-        dec_threads[i] = std::thread(bind(&benchmarkFile, split[i], count, show));
-    }
+    // vector<thread> dec_threads(cores);
+    // for (unsigned int i=0; i<cores; i++) {
+    //     dec_threads[i] = std::thread(bind(&benchmarkFile, split[i], count, show));
+    // }
 
-    for (int i=0; i<cores; i++) {
-        dec_threads[i].join();
-    }
+    // for (int i=0; i<cores; i++) {
+    //     dec_threads[i].join();
+    // }
     return 0;
 }
