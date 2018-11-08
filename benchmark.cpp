@@ -118,7 +118,6 @@ vector<vector<T>> splitVector (vector<T> &vec, int size){
     int vecSize = (vec.size() % size > 0) ?  vec.size()/size+1 : vec.size()/size;
     vector<vector<T>> split(vecSize);
     auto start = vec.begin();
-
     for (int i=0; i<vecSize; i++) {
         if (i == vecSize - 1) {
             split[i].assign(start, vec.end());
@@ -175,13 +174,17 @@ int main(int argc, char **argv)
             float decodetook = 0;
             float decodebyte = 0;
             for (int i=0; i<split.size(); i++) {
-                vector<vector<pair<char*, int>>> temp = splitVector(split[i], split[i].size()/cores);
+                int size = split[i].size() / cores;
+                size = size < 1 ? 1 : size;
+                vector<vector<pair<char*, int>>> temp = splitVector(split[i], size);
                 t0 = clockCounter();
-                for (int j=0; j<cores; j++) {
+                // if the batch size is smaller than the total number of threads, use only that are needed
+                int minSize = min ((int)temp.size(), cores);
+                for (int j=0; j<minSize; j++) {
                     //decode
                     dec_threads[j] = thread(bind(&decodeFile, temp[j]));
                 }
-                for (int i=0; i<cores; i++) {
+                for (int i=0; i<minSize; i++) {
                     dec_threads[i].join();
                 }
                 t1 = clockCounter();
@@ -192,7 +195,6 @@ int main(int argc, char **argv)
             //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
         }
         avgdecode /= count;
-
         printf("Decode with %d core(s)\n", cores);
         printf("--------------------------------\n");
         printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
