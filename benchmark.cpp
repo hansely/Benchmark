@@ -43,25 +43,24 @@ std::vector<string> glob(const string& pat){
     return ret;
 }
 
-void decodeFile(long filelen, char* &buffer) {
-    Mat img = imdecode(Mat(1, filelen, CV_8UC1, buffer), CV_LOAD_IMAGE_UNCHANGED);
+void decodeFile(const vector<pair<char*, int>> &buffer) {
+    for (int i=0; i<buffer.size(); i++) {
+        Mat img = imdecode(Mat(1, buffer[i].second, CV_8UC1, buffer[i].first), CV_LOAD_IMAGE_UNCHANGED);
+    }
 }
 
-void benchmarkFile(vector<string> &filenames, int count, bool show) {
-    
+vector<pair<char*, int>> readFile(vector<string> &filenames, int count, bool show) {
+    vector<pair<char*, int>> buffers;
     char *buffer;
     long filelen;
-    float avgtime=0;
-    float avgdecode=0;
+    float avgtime=0;;
     long totalbyte=0;
-    int64_t freq = clockFrequency(), t0, t1, d0, d1;
+    int64_t freq = clockFrequency(), t0, t1;
     FILE *file;
     int totalsize = filenames.size();
     for (int i=0; i<count; i++) {
         long byteread = 0;
         float timetook = 0;
-        float decodetook = 0;
-        buffer = (char *)malloc(BUFFER_SIZE);
         for (int j=0; j<totalsize; j++) {
             //read
             t0 = clockCounter();
@@ -73,21 +72,20 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
             fseek(file, 0, SEEK_END);
             filelen = ftell(file);
             rewind(file);
+            buffer =  buffer = (char *)malloc(filelen);
             byteread+=fread(buffer, 1, filelen, file);
             t1 = clockCounter();
 
             float readtime = (float)(t1-t0)*1000.0f/(float)freq;
             timetook+=readtime;
-
-            //decode
-            d0 = clockCounter();
-            //decodeFile(filelen, buffer);
-            d1 = clockCounter();
-            float decodetime= (float)(d1-d0)*1000.0f/(float)freq;
-            decodetook+=decodetime;
             fclose(file);
+            if (i==0) {
+                buffers.push_back(make_pair(buffer, filelen));
+            }
+
         }
         free(buffer);
+
         if (show) {
             printf("Iteration %d\n", i+1);
             printf("Bytes read: %ld bytes\n", byteread);
@@ -98,44 +96,36 @@ void benchmarkFile(vector<string> &filenames, int count, bool show) {
             printf("Images per second: %ld images\n", (long)(1000/timetook*(float)totalsize));
             printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/timetook));
             printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/timetook)/1000000);
-
-            // printf("Decode\n");
-            // printf("--------------------------------\n");
-            // printf("Decoding %d images took %.3f msec\n", totalsize, decodetook);
-            // printf("Images per second: %ld images\n", (long)(1000/decodetook*(float)totalsize));
-            // printf("Bytes per second: %ld bytes\n", (long)(1000*byteread/decodetook));
-            // printf("MB per second: %.2ld bytes\n\n", (long)(1000*byteread/decodetook)/1000000);
         }
         avgtime+=timetook;
-        avgdecode+=decodetook;
         totalbyte+=byteread;
     }
     totalbyte/=count;
-
+    avgtime/=count;
     printf("Read\n");
     printf("--------------------------------\n");
-    printf("\nAverage speed per iteration: %.3f msec\n", avgtime/count);
+    printf("\nAverage speed per iteration: %.3f msec\n", avgtime);
     printf("Average bytes decoded per iteration: %ld bytes\n", totalbyte);
-    printf("Images per second: %ld images\n", (long)(1000/avgtime*count*(float)totalsize));
-    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgtime*count));
-    printf("MB per second: %.2ld bytes\n\n", (long)(1000*totalbyte/avgtime*count)/1000000);
-    printf("Decode\n");
-    printf("--------------------------------\n");
-    printf("\nAverage speed per iteration: %.3f msec\n", avgdecode/count);
-    printf("Average bytes decoded per iteration: %ld bytes\n", totalbyte);
-    printf("Images per second: %ld images\n", (long)(1000/avgdecode*count*(float)totalsize));
-    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgdecode*count));
-    printf("MB per second: %.2ld bytes\n\n", (long)(1000*totalbyte/avgdecode*count)/1000000);
+    printf("Images per second: %ld images\n", (long)(1000/avgtime*(float)totalsize));
+    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgtime));
+    printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgtime)/1000000);
+
+    return buffers;
 }
 
 template <typename T>
-vector<vector<T>> splitVector (vector<T> &vec, int cores){
-    vector<vector<T>> split(cores);
-    size_t size = vec.size() / cores;
+vector<vector<T>> splitVector (vector<T> &vec, int size){
+    int vecSize = (vec.size() % size > 0) ?  vec.size()/size+1 : vec.size()/size;
+    vector<vector<T>> split(vecSize);
     auto start = vec.begin();
-    for (int i=0; i<cores; i++) {
-        split[i].assign(start, start+size);
-        cout << *start << endl;
+
+    for (int i=0; i<vecSize; i++) {
+        if (i == vecSize - 1) {
+            split[i].assign(start, vec.end());
+        }
+        else {
+            split[i].assign(start, start+size);
+        }
         start+=size;
     }
     return split;
@@ -163,16 +153,48 @@ int main(int argc, char **argv)
         }
     }
     filenames = glob(pat);
-    benchmarkFile(filenames, count, show);
-    // vector<vector<string>> split = splitVector(filenames, cores);
 
-    // vector<thread> dec_threads(cores);
-    // for (unsigned int i=0; i<cores; i++) {
-    //     dec_threads[i] = std::thread(bind(&benchmarkFile, split[i], count, show));
-    // }
+    //read
+    vector<pair<char*, int>> buffers = readFile(filenames, count, show);
 
-    // for (int i=0; i<cores; i++) {
-    //     dec_threads[i].join();
-    // }
+    long totalbyte = 0;
+
+    for (int i=0; i< buffers.size(); i++) {
+        totalbyte+=buffers[i].second;
+    }
+    vector<vector<pair<char*, int>>> split = splitVector(buffers, 64);
+    vector<thread> dec_threads(cores);
+    int64_t freq = clockFrequency(), t0, t1;
+
+    float avgdecode = 0;
+
+    for (int c = 0; c<count; c++) {
+        float decodetook = 0;
+        float decodebyte = 0;
+        for (int i=0; i<split.size(); i++) {
+            vector<vector<pair<char*, int>>> temp = splitVector(split[i], split[i].size()/cores);
+            t0 = clockCounter();
+            for (int j=0; j<cores; j++) {
+                //decode
+                dec_threads[j] = thread(bind(&decodeFile, temp[j]));
+            }
+            for (int i=0; i<cores; i++) {
+                dec_threads[i].join();
+            }
+            t1 = clockCounter();
+            float decodetime = (float)(t1-t0)*1000.0f/(float)freq;
+            decodetook+=decodetime;
+        }
+        avgdecode+=decodetook;
+        //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
+    }
+    avgdecode /= count;
+
+    printf("Decode\n");
+    printf("--------------------------------\n");
+    printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
+    printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
+    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgdecode));
+    printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
     return 0;
 }
