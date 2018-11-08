@@ -177,9 +177,9 @@ int main(int argc, char **argv)
                 int size = split[i].size() / cores;
                 size = size < 1 ? 1 : size;
                 vector<vector<pair<char*, int>>> temp = splitVector(split[i], size);
-                t0 = clockCounter();
                 // if the batch size is smaller than the total number of threads, use only that are needed
                 int minSize = min ((int)temp.size(), cores);
+                t0 = clockCounter();
                 for (int j=0; j<minSize; j++) {
                     //decode
                     dec_threads[j] = thread(bind(&decodeFile, temp[j]));
