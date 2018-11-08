@@ -1,10 +1,10 @@
 #include <iostream>
 #include <glob.h>
+#include <unistd.h>
 #include <vector>
 #include <string>
 #include <fstream>
 #include <chrono>
-#include <functional>
 #include <thread>
 #include <climits>
 #include <opencv2/opencv.hpp>
@@ -107,7 +107,7 @@ vector<pair<char*, int>> readFile(vector<string> &filenames, int count, bool sho
     printf("\nAverage speed per iteration: %.3f msec\n", avgtime);
     printf("Average bytes decoded per iteration: %ld bytes\n", totalbyte);
     printf("Images per second: %ld images\n", (long)(1000/avgtime*(float)totalsize));
-    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgtime));
+    printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgtime));
     printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgtime)/1000000);
 
     return buffers;
@@ -133,8 +133,8 @@ vector<vector<T>> splitVector (vector<T> &vec, int size){
 
 int main(int argc, char **argv)
 {
-    if (argc < 4) {
-        cout << "Usage: ./benchmark [Image Folder] [Iteration Count] [Core Count] [-s]" << endl;
+    if (argc < 3) {
+        cout << "Usage: ./benchmark [Image Folder] [Iteration Count] [-s]" << endl;
         exit(-1);
     }
 
@@ -145,9 +145,8 @@ int main(int argc, char **argv)
     string pat = dir+"*";
     
     int count = atoi(argv[2]);
-    int cores = atoi(argv[3]);
-    if (argc >=5) {
-        string option = argv[4];
+    if (argc >=4) {
+        string option = argv[3];
         if (option == "-s") {
             show = true;
         }
@@ -162,39 +161,45 @@ int main(int argc, char **argv)
     for (int i=0; i< buffers.size(); i++) {
         totalbyte+=buffers[i].second;
     }
+
+    int num_of_cores = sysconf(_SC_NPROCESSORS_ONLN);
+    cout << "The number of core: "<< num_of_cores << endl << endl;
+
     vector<vector<pair<char*, int>>> split = splitVector(buffers, 64);
-    vector<thread> dec_threads(cores);
     int64_t freq = clockFrequency(), t0, t1;
-
-    float avgdecode = 0;
-
-    for (int c = 0; c<count; c++) {
-        float decodetook = 0;
-        float decodebyte = 0;
-        for (int i=0; i<split.size(); i++) {
-            vector<vector<pair<char*, int>>> temp = splitVector(split[i], split[i].size()/cores);
-            t0 = clockCounter();
-            for (int j=0; j<cores; j++) {
-                //decode
-                dec_threads[j] = thread(bind(&decodeFile, temp[j]));
+    
+    for (int cores = 1; cores<= num_of_cores; cores*=2) {
+        vector<thread> dec_threads(cores);
+        float avgdecode = 0;
+        for (int c = 0; c<count; c++) {
+            float decodetook = 0;
+            float decodebyte = 0;
+            for (int i=0; i<split.size(); i++) {
+                vector<vector<pair<char*, int>>> temp = splitVector(split[i], split[i].size()/cores);
+                t0 = clockCounter();
+                for (int j=0; j<cores; j++) {
+                    //decode
+                    dec_threads[j] = thread(bind(&decodeFile, temp[j]));
+                }
+                for (int i=0; i<cores; i++) {
+                    dec_threads[i].join();
+                }
+                t1 = clockCounter();
+                float decodetime = (float)(t1-t0)*1000.0f/(float)freq;
+                decodetook+=decodetime;
             }
-            for (int i=0; i<cores; i++) {
-                dec_threads[i].join();
-            }
-            t1 = clockCounter();
-            float decodetime = (float)(t1-t0)*1000.0f/(float)freq;
-            decodetook+=decodetime;
+            avgdecode+=decodetook;
+            //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
         }
-        avgdecode+=decodetook;
-        //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
-    }
-    avgdecode /= count;
+        avgdecode /= count;
 
-    printf("Decode\n");
-    printf("--------------------------------\n");
-    printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
-    printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
-    printf("Bytes per second: %ld bytes\n\n", (long)(1000*totalbyte/avgdecode));
-    printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
+        printf("Decode with %d core(s)\n", cores);
+        printf("--------------------------------\n");
+        printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
+        printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
+        printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgdecode));
+        printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
+    }
+    
     return 0;
 }
