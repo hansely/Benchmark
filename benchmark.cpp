@@ -44,16 +44,14 @@ std::vector<string> glob(const string& pat){
     return ret;
 }
 
-void decodeFile(const vector<pair<char*, int>> &buffer) {
+void decodeFile(const vector<pair<char*, int>> &buffer, bool use_fp16) {
     int reverseInputChannelOrder = 0;
 
     float preprocessMpy[3] = {1,1,1};
     float preprocessAdd[3] = {0,0,0};
     for (int k=0; k<buffer.size(); k++) {
         Mat matOrig = imdecode(Mat(1, buffer[k].second, CV_8UC1, buffer[k].first), CV_LOAD_IMAGE_UNCHANGED);
-        float * buf = (float *)malloc(sizeof(float)*1*3*matOrig.cols*matOrig.rows);
         int length = matOrig.cols * matOrig.rows;
-        unsigned char *data_resize = nullptr;
         unsigned char * img;
         img = matOrig.data;
         __m128i mask_B, mask_G, mask_R;
@@ -70,37 +68,75 @@ void decodeFile(const vector<pair<char*, int>> &buffer) {
             mask_B = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
         }
         int alignedLength = (length-2)& ~3;
-        float * B_buf = buf;
-        float * G_buf = B_buf + length;
-        float * R_buf = G_buf + length;
-        int i = 0;
-
-        __m128 fR, fG, fB;
-        for (; i < alignedLength; i += 4)
-        {
-            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
-            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
-            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
-            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
-            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
-            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
-            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
-            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
-            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
-            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
-            _mm_storeu_ps(B_buf, fB);
-            _mm_storeu_ps(G_buf, fG);
-            _mm_storeu_ps(R_buf, fR);
-            B_buf += 4; G_buf += 4; R_buf += 4;
-            img += 12;
+        if (!use_fp16) {
+            float * buf = (float *)malloc(sizeof(float)*1*3*matOrig.cols*matOrig.rows);
+            float * B_buf = buf;
+            float * G_buf = B_buf + length;
+            float * R_buf = G_buf + length;
+            int i = 0;
+            __m128 fR, fG, fB;
+            for (; i < alignedLength; i += 4) {
+                __m128i pix0 = _mm_loadu_si128((__m128i *) img);
+                fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
+                fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
+                fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+                fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
+                fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
+                fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
+                fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
+                fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
+                fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+                _mm_storeu_ps(B_buf, fB);
+                _mm_storeu_ps(G_buf, fG);
+                _mm_storeu_ps(R_buf, fR);
+                B_buf += 4; G_buf += 4; R_buf += 4;
+                img += 12;
+            }
+            for (; i < length; i++, img += 3) {
+                *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
+                *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
+                *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
+            }
         }
-        for (; i < length; i++, img += 3) {
-            *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
-            *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
-            *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
+        else {
+            unsigned short * buf = (unsigned short *)malloc(sizeof(unsigned short)*1*3*matOrig.cols*matOrig.rows);
+            unsigned short * B_buf = (unsigned short *)buf;
+            unsigned short * G_buf = B_buf + length;
+            unsigned short * R_buf = G_buf + length;
+            int i = 0;
+
+            __m128 fR, fG, fB;
+            __m128i hR, hG, hB;
+            for (; i < alignedLength; i += 4)
+            {
+                __m128i pix0 = _mm_loadu_si128((__m128i *) img);
+                fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
+                fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
+                fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+                fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
+                fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
+                fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
+                fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
+                fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
+                fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+                // convert to half
+                hB = _mm_cvtps_ph(fB, 0xF);
+                hG = _mm_cvtps_ph(fG, 0xF);
+                hR = _mm_cvtps_ph(fR, 0xF);
+                _mm_storel_epi64((__m128i*)B_buf, hB);
+                _mm_storel_epi64((__m128i*)G_buf, hG);
+                _mm_storel_epi64((__m128i*)R_buf, hR);
+                B_buf += 4; G_buf += 4; R_buf += 4;
+                img += 12;
+            }
+            for (; i < length; i++, img += 3) {
+                *B_buf++ = _cvtss_sh((float)((img[0] * preprocessMpy[0]) + preprocessAdd[0]), 1);
+                *G_buf++ = _cvtss_sh((float)((img[1] * preprocessMpy[1]) + preprocessAdd[1]), 1);
+                *R_buf++ = _cvtss_sh((float)((img[2] * preprocessMpy[2]) + preprocessAdd[2]), 1);
+            }
         }
         matOrig.release();
-        }
+    }
 }
 
 vector<pair<char*, int>> readFile(vector<string> &filenames, int count, bool show) {
@@ -187,23 +223,32 @@ vector<vector<T>> splitVector (vector<T> &vec, int size){
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        cout << "Usage: ./benchmark [Image Folder] [Iteration Count] [-s]" << endl;
-        exit(-1);
+        cout << "Usage: ./benchmark [Image Folder] [Iteration Count] [-f16] [-s]" << endl;
+        return 0;
     }
 
     vector<string> filenames;
     bool show = false;
+    bool use_fp16 = false;
     string dir = argv[1];
     dir.append("/");
     string pat = dir+"*";
     
     int count = atoi(argv[2]);
-    if (argc >=4) {
+    if (argc >=5) {
+        use_fp16 = true;
+        show = true;
+    }
+    else if (argc >=4) {
         string option = argv[3];
-        if (option == "-s") {
+        if (option == "-f16") {
+            use_fp16 = true;
+        }
+        else if (option == "-s") {
             show = true;
         }
     }
+
     filenames = glob(pat);
 
     //read
@@ -236,7 +281,7 @@ int main(int argc, char **argv)
                 t0 = clockCounter();
                 for (int j=0; j<minSize; j++) {
                     //decode
-                    dec_threads[j] = thread(bind(&decodeFile, temp[j]));
+                    //dec_threads[j] = thread(bind(&decodeFile, temp[j], use_fp16));
                 }
                 for (int i=0; i<minSize; i++) {
                     dec_threads[i].join();
@@ -249,12 +294,12 @@ int main(int argc, char **argv)
             //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
         }
         avgdecode /= count;
-        printf("Decode with %d core(s)\n", cores);
-        printf("--------------------------------\n");
-        printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
-        printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
-        printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgdecode));
-        printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
+        // printf("Decode with %d core(s)\n", cores);
+        // printf("--------------------------------\n");
+        // printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
+        // printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
+        // printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgdecode));
+        // printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
     }
     
     return 0;
