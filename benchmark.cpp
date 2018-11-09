@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <vector>
 #include <string>
+#include <dlfcn.h>
 #include <fstream>
 #include <chrono>
 #include <thread>
@@ -44,9 +45,62 @@ std::vector<string> glob(const string& pat){
 }
 
 void decodeFile(const vector<pair<char*, int>> &buffer) {
-    for (int i=0; i<buffer.size(); i++) {
-        Mat img = imdecode(Mat(1, buffer[i].second, CV_8UC1, buffer[i].first), CV_LOAD_IMAGE_UNCHANGED);
-    }
+    int reverseInputChannelOrder = 0;
+
+    float preprocessMpy[3] = {1,1,1};
+    float preprocessAdd[3] = {0,0,0};
+    for (int k=0; k<buffer.size(); k++) {
+        Mat matOrig = imdecode(Mat(1, buffer[k].second, CV_8UC1, buffer[k].first), CV_LOAD_IMAGE_UNCHANGED);
+        float * buf = (float *)malloc(sizeof(float)*1*3*matOrig.cols*matOrig.rows);
+        int length = matOrig.cols * matOrig.rows;
+        unsigned char *data_resize = nullptr;
+        unsigned char * img;
+        img = matOrig.data;
+        __m128i mask_B, mask_G, mask_R;
+        if (reverseInputChannelOrder)
+        {
+            mask_B = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
+            mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
+            mask_R = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
+        }
+        else
+        {
+            mask_R = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
+            mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
+            mask_B = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
+        }
+        int alignedLength = (length-2)& ~3;
+        float * B_buf = buf;
+        float * G_buf = B_buf + length;
+        float * R_buf = G_buf + length;
+        int i = 0;
+
+        __m128 fR, fG, fB;
+        for (; i < alignedLength; i += 4)
+        {
+            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
+            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
+            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
+            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
+            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
+            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
+            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
+            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
+            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+            _mm_storeu_ps(B_buf, fB);
+            _mm_storeu_ps(G_buf, fG);
+            _mm_storeu_ps(R_buf, fR);
+            B_buf += 4; G_buf += 4; R_buf += 4;
+            img += 12;
+        }
+        for (; i < length; i++, img += 3) {
+            *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
+            *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
+            *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
+        }
+        matOrig.release();
+        }
 }
 
 vector<pair<char*, int>> readFile(vector<string> &filenames, int count, bool show) {
@@ -72,7 +126,7 @@ vector<pair<char*, int>> readFile(vector<string> &filenames, int count, bool sho
             fseek(file, 0, SEEK_END);
             filelen = ftell(file);
             rewind(file);
-            buffer =  buffer = (char *)malloc(filelen);
+            buffer = (char *)malloc(filelen);
             byteread+=fread(buffer, 1, filelen, file);
             t1 = clockCounter();
 
