@@ -11,6 +11,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
+//#include <xmmintrin.h>
+#include <nmmintrin.h>
 
 using namespace std;
 using namespace cv;
@@ -75,27 +77,43 @@ void decodeFile(const vector<pair<char*, int>> &buffer, bool use_fp16) {
             float * R_buf = G_buf + length;
             int i = 0;
             __m128 fR, fG, fB;
+            __m128 fB_temp, fG_temp, fR_temp;
             for (; i < alignedLength; i += 4) {
                 __m128i pix0 = _mm_loadu_si128((__m128i *) img);
                 fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
                 fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
                 fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+                /*
                 fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
                 fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
                 fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
                 fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
                 fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
                 fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+                */
+                fB = _mm_fmadd_ps(fB, _mm_set1_ps(preprocessMpy[0]), _mm_set1_ps(preprocessAdd[0]));
+                fG = _mm_fmadd_ps(fG, _mm_set1_ps(preprocessMpy[1]), _mm_set1_ps(preprocessAdd[1]));
+                fR = _mm_fmadd_ps(fR, _mm_set1_ps(preprocessMpy[2]), _mm_set1_ps(preprocessAdd[2]));
                 _mm_storeu_ps(B_buf, fB);
                 _mm_storeu_ps(G_buf, fG);
                 _mm_storeu_ps(R_buf, fR);
                 B_buf += 4; G_buf += 4; R_buf += 4;
                 img += 12;
             }
-            for (; i < length; i++, img += 3) {
+            /*for (; i < length; i++, img += 3) {
                 *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
                 *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
                 *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
+            }*/
+            for (; i < length; i+=4, img += 3) {
+            	fB_temp = _mm_fmadd_ps(_mm_set1_ps(img[0]), _mm_set1_ps(preprocessMpy[0]), _mm_set1_ps(preprocessAdd[0]));
+            	fG_temp = _mm_fmadd_ps(_mm_set1_ps(img[1]), _mm_set1_ps(preprocessMpy[1]), _mm_set1_ps(preprocessAdd[1]));
+            	fR_temp = _mm_fmadd_ps(_mm_set1_ps(img[2]), _mm_set1_ps(preprocessMpy[2]), _mm_set1_ps(preprocessAdd[2]));
+            	_mm_storeu_ps(B_buf, fB_temp);
+                _mm_storeu_ps(G_buf, fG_temp);
+                _mm_storeu_ps(R_buf, fR_temp);
+                B_buf += 4; G_buf += 4; R_buf += 4;
+                img += 12;
             }
         }
         else {
@@ -113,12 +131,17 @@ void decodeFile(const vector<pair<char*, int>> &buffer, bool use_fp16) {
                 fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
                 fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
                 fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+                /*
                 fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
                 fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
                 fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
                 fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
                 fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
                 fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+                */
+                fB = _mm_fmadd_ps(fB, _mm_set1_ps(preprocessMpy[0]), _mm_set1_ps(preprocessAdd[0]));
+                fG = _mm_fmadd_ps(fG, _mm_set1_ps(preprocessMpy[1]), _mm_set1_ps(preprocessAdd[1]));
+                fR = _mm_fmadd_ps(fR, _mm_set1_ps(preprocessMpy[2]), _mm_set1_ps(preprocessAdd[2]));
                 // convert to half
                 hB = _mm_cvtps_ph(fB, 0xF);
                 hG = _mm_cvtps_ph(fG, 0xF);
