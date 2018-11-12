@@ -304,7 +304,7 @@ int main(int argc, char **argv)
                 t0 = clockCounter();
                 for (int j=0; j<minSize; j++) {
                     //decode
-                    //dec_threads[j] = thread(bind(&decodeFile, temp[j], use_fp16));
+                    dec_threads[j] = thread(bind(&decodeFile, temp[j], use_fp16));
                 }
                 for (int i=0; i<minSize; i++) {
                     dec_threads[i].join();
@@ -317,12 +317,12 @@ int main(int argc, char **argv)
             //printf("Decoding %d files took %.3f msec\n", (int)buffers.size(), decodetook);
         }
         avgdecode /= count;
-        // printf("Decode with %d core(s)\n", cores);
-        // printf("--------------------------------\n");
-        // printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
-        // printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
-        // printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgdecode));
-        // printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
+        printf("Decode with %d core(s)\n", cores);
+        printf("--------------------------------\n");
+        printf("\nAverage speed per iteration: %.3f msec\n", avgdecode);
+        printf("Images per second: %ld images\n", (long)(1000/avgdecode*(float)buffers.size()));
+        printf("Bytes per second: %ld bytes\n", (long)(1000*totalbyte/avgdecode));
+        printf("MB per second: %.2f bytes\n\n", (float)(1000*totalbyte/avgdecode)/1000000);
     }
     
     return 0;
