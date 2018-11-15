@@ -53,6 +53,8 @@ void decodeFile(const vector<pair<char*, int>> &buffer, bool use_fp16) {
     float preprocessAdd[3] = {0,0,0};
     for (int k=0; k<buffer.size(); k++) {
         Mat matOrig = imdecode(Mat(1, buffer[k].second, CV_8UC1, buffer[k].first), CV_LOAD_IMAGE_UNCHANGED);
+        int64_t freq = clockFrequency(), t0, t1;
+        t0 = clockCounter();
         int length = matOrig.cols * matOrig.rows;
         unsigned char * img;
         img = matOrig.data;
@@ -159,6 +161,10 @@ void decodeFile(const vector<pair<char*, int>> &buffer, bool use_fp16) {
             }
         }
         matOrig.release();
+        t1 = clockCounter();
+        float readtime = (float)(t1-t0)*1000.0f/(float)freq;
+        cout << "hi" << readtime << endl;
+        exit(1);
     }
 }
 
