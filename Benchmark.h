@@ -1,14 +1,15 @@
 #pragma once
 
-#include "FileQueue.h"
-#include "Utils.h"
+#include <string>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include "FileQueue.h"
+#include "Utils.h"
 
 class Benchmark {
  public:
-    Benchmark(std::string directory, bool use_fp16);
+    Benchmark(const std::string directory, bool use_fp16, int count);
 
     ~Benchmark();
 
@@ -16,11 +17,13 @@ class Benchmark {
 
     bool isEmptyQueue();
 
+    void run();
+
     unsigned int getQueueSize();
 
     void RGB_resize(unsigned char *Rgb_in, unsigned char *Rgb_out, unsigned int swidth, unsigned int sheight, unsigned int dwidth, unsigned int dheight);
 
-    unsigned int readFile(int i);
+    void readFile(int iteration);
 
     void decodeFile();
 
@@ -35,6 +38,6 @@ class Benchmark {
     unsigned int mTotalbyte;
     std::vector<std::string> mFilenames;
     bool mUse_fp16;
+    int mCount;
     std::unique_ptr<FileQueue> mFileQueue;
-
 };

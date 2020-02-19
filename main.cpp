@@ -28,34 +28,34 @@ int main(int argc, char **argv) {
         }
     }
 
-    int64_t freq = clockFrequency(), t0, t1;
-    Benchmark benchmark(dir, use_fp16);
-    // read
-    unsigned int totalByte = 0;
-    float totalReadTime = 0;
-    for (int i = 0; i < count; i++) {
-        unsigned int byteRead = 0;
-        t0 = clockCounter();
-        byteRead+=benchmark.readFile(i);
-        t1 = clockCounter();
-        float readTime = (float)(t1-t0)*1000.0f/(float)freq;
-        if (show) {
-            printf("Iteration %d\n", i+1);
-            printf("--------------------------------\n");
-            printAverage(0, readTime, benchmark.getFileSize(), byteRead);
-        }
-        totalReadTime+=readTime;
-        totalByte+=byteRead;
-    }
-    printAverage(0, totalReadTime/count, benchmark.getFileSize(), totalByte/count);
+    Benchmark bEngine(dir, use_fp16, count);
+    bEngine.run();
 
-    int num_of_cores = sysconf(_SC_NPROCESSORS_ONLN);
-    cout << "The total number of threads: "<< num_of_cores << endl << endl;
+    // unsigned int totalByte = 0;
+    // float totalReadTime = 0;
+    // for (int i = 0; i < count; i++) {
+    //     unsigned int byteRead = 0;
+    //     t0 = clockCounter();
+    //     byteRead+=benchmark.readFile(i);
+    //     t1 = clockCounter();
+    //     float readTime = (float)(t1-t0)*1000.0f/(float)freq;
+    //     if (show) {
+    //         printf("Iteration %d\n", i+1);
+    //         printf("--------------------------------\n");
+    //         printAverage(0, readTime, benchmark.getFileSize(), byteRead);
+    //     }
+    //     totalReadTime+=readTime;
+    //     totalByte+=byteRead;
+    // }
+    // printAverage(0, totalReadTime/count, benchmark.getFileSize(), totalByte/count);
 
-    // decode & convert to tensor
-    while (!benchmark.isEmptyQueue()) {
-            benchmark.decodeFile();
-    }
+    // int num_of_cores = sysconf(_SC_NPROCESSORS_ONLN);
+    // cout << "The total number of threads: "<< num_of_cores << endl << endl;
+
+    // // decode & convert to tensor
+    // while (!benchmark.isEmptyQueue()) {
+    //     benchmark.decodeFile();
+    // }
     // for (int cores = 1; cores<= num_of_cores; cores*=2) {
     //      //vector<thread> dec_threads(cores);
     // //     float avgdecode = 0;

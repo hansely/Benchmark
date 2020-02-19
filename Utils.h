@@ -4,6 +4,7 @@
 #include <string>
 #include <chrono>
 #include <glob.h>
+#include <iostream>
 
 inline int64_t clockCounter() {
     return std::chrono::high_resolution_clock::now().time_since_epoch().count();
@@ -31,4 +32,4 @@ std::vector<std::vector<T>> splitVector(const std::vector<T> &vec, int size) {
     return split;
 }
 
-void printAverage(int mode, float avgSpeed, int bufferSize, unsigned int totalByte);
+void printResult(int iteration, float time, int bufferSize, unsigned int totalByte);

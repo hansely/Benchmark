@@ -1,6 +1,6 @@
-#include "Benchmark.h"
 #include <nmmintrin.h>
 #include <x86intrin.h>
+#include "Benchmark.h"
 using namespace std;
 using namespace cv;
 
@@ -8,12 +8,62 @@ using namespace cv;
 #define FP_MUL (1 << FP_BITS)
 
 // #define BUFFER_SIZE INT_MAX
-Benchmark::Benchmark(string directory, bool use_fp16) : mUse_fp16(use_fp16) {
+
+Benchmark::Benchmark(string directory, bool use_fp16, int count) : mUse_fp16(use_fp16), mCount(count) {
     mFilenames = glob(directory);
     mFileQueue = make_unique<FileQueue>();
 }
 
 Benchmark::~Benchmark() {}
+
+void Benchmark::run() {
+     // read
+    // unsigned int totalByte = 0;
+    // float totalReadTime = 0;
+    int totalSize = mFilenames.size();
+    cout << "Read" << "(" << totalSize << " files)"<< endl;
+    cout << "-------------------------------------" << endl;
+    for (int i = 1; i <= mCount; i++) {
+        readFile(i);
+    }
+}
+
+void Benchmark::readFile(int iteration) {
+    FILE *file;
+    char *buffer;
+    int totalSize = mFilenames.size();
+    unsigned int filelen;
+    unsigned int byteRead = 0;
+    float readTime = 0;
+    int64_t freq = clockFrequency(), t0, t1;
+
+    for (int i=0; i<totalSize; i++) {
+        file = fopen(mFilenames[i].c_str(), "r");
+        if (file==NULL) {
+            cout << "Unable to open " << mFilenames[i] << endl;
+            exit(1);
+        }
+        fseek(file, 0, SEEK_END);
+        filelen = ftell(file);
+        rewind(file);
+        buffer = (char *)malloc(filelen);
+
+        t0 = clockCounter();
+        byteRead += fread(buffer, 1, filelen, file);
+        t1 = clockCounter();
+        readTime += (float)(t1-t0)*1000.0f/(float)freq;
+
+        fclose(file);
+        if (iteration == 0) {
+            tuple<char*, int> image(buffer, filelen);
+            mFileQueue->enqueue(image);
+        }
+    }
+    cout << readTime << endl;
+    printResult(iteration, readTime, totalSize, byteRead);
+
+    return;
+}
 
 int Benchmark::getFileSize() { return mFilenames.size();}
 
@@ -183,33 +233,6 @@ void Benchmark::RGB_resize(unsigned char *Rgb_in, unsigned char *Rgb_out, unsign
         }
     }
     if (Xmap) delete[] Xmap;
-}
-
-unsigned int Benchmark::readFile(int count) {
-    FILE *file;
-    char *buffer;
-    int totalsize = mFilenames.size();
-    unsigned int filelen;
-    unsigned int byteread = 0;
-
-    for (int j=0; j < totalsize; j++) {
-        file = fopen(mFilenames[j].c_str(), "r");
-        if (file== NULL) {
-            cout << "can't open" << mFilenames[j] << endl;
-            exit(-1);
-        }
-        fseek(file, 0, SEEK_END);
-        filelen = ftell(file);
-        rewind(file);
-        buffer = (char *)malloc(filelen);
-        byteread+=fread(buffer, 1, filelen, file);
-        fclose(file);
-        if (count == 0) {
-            tuple<char*, int> image(buffer, filelen);
-            mFileQueue->enqueue(image);
-        }
-    }
-    return byteread;
 }
 
 void Benchmark::decodeFile() {
