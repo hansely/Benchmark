@@ -7,7 +7,7 @@ FileQueue::FileQueue() {}
 
 FileQueue::~FileQueue() {}
 
-void FileQueue::enqueue(const tuple<char*, int> &image) {
+void FileQueue::enqueue(tuple<char*, int> &image) {
     unique_lock<mutex> lock(mMutex);
     mQueue.push(move(image));
     lock.unlock();

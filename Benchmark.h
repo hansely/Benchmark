@@ -9,7 +9,7 @@
 
 class Benchmark {
  public:
-    Benchmark(const std::string directory, bool use_fp16, int count);
+    Benchmark(const std::string directory, bool use_fp16, int count, int numCore);
 
     ~Benchmark();
 
@@ -25,9 +25,11 @@ class Benchmark {
 
     void readFile(int iteration);
 
-    void decodeFile();
+    void decodeFileAndConvertToTensor(char* byteStream, int size);
 
-    void convertToTensor(const cv::Mat &matOrig);
+    void decodeFileAndConvertToTensorBatch(std::vector<std::tuple<char*, int>> &imageVec);
+
+    void convertToTensor(cv::Mat &matOrig);
 
  private:
     int reverseInputChannelOrder = 0;
@@ -39,5 +41,8 @@ class Benchmark {
     std::vector<std::string> mFilenames;
     bool mUse_fp16;
     int mCount;
+    int mCores;
+    float mDecodeTime;
+    float mConvertTime;
     std::unique_ptr<FileQueue> mFileQueue;
 };

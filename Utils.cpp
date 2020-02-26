@@ -19,9 +19,28 @@ std::vector<std::string> glob(std::string& pat) {
     return ret;
 }
 
-void printResult(int iteration, float time, int imageCount, unsigned int totalByte) {
+std::vector<std::vector<std::tuple<char*, int>>> splitQueue(FileQueue &imageQueue, int cores) {
+    int queueSize = imageQueue.getSize() / cores;
+    std::vector<std::vector<std::tuple<char*, int>>> split(cores);
+    std::tuple<char*, int> image;
+    for (int i = 0; i < cores; i++) {
+        if (i == cores - 1) {
+            while (!imageQueue.isEmpty()) {
+                image = imageQueue.dequeue();
+                split[i].push_back(image);
+            }
+        } else {
+            for (int j=0; j<queueSize; j++) {
+                image = imageQueue.dequeue();
+                split[i].push_back(image);
+            }
+        }
+    }
+    return split;
+}
+
+void printResult(float time, int imageCount, unsigned int totalByte) {
     unsigned int FPS = (unsigned int)(1000/time*(float)imageCount);
     float MBS = totalByte/time/1000;
-    printf("Iteration %d | %u FPS | %.2f MB/s\n" , iteration, FPS, MBS);
-    printf("-------------------------------------\n");
+    printf(" | %u FPS | %.2f MB/s\n" , FPS, MBS);
 }

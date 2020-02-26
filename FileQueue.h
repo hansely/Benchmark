@@ -11,7 +11,7 @@ class FileQueue {
  public:
     FileQueue();
     ~FileQueue();
-    void enqueue(const std::tuple<char*, int> &image);
+    void enqueue(std::tuple<char*, int> &image);
     std::tuple<char*, int> dequeue();
     bool isEmpty();
     unsigned int getSize();

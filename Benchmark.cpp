@@ -1,6 +1,13 @@
 #include <nmmintrin.h>
 #include <x86intrin.h>
+#include <unistd.h>
+#include <thread>
+#include <functional>
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 #include "Benchmark.h"
+
 using namespace std;
 using namespace cv;
 
@@ -9,34 +16,62 @@ using namespace cv;
 
 // #define BUFFER_SIZE INT_MAX
 
-Benchmark::Benchmark(string directory, bool use_fp16, int count) : mUse_fp16(use_fp16), mCount(count) {
+Benchmark::Benchmark(string directory, bool use_fp16, int count, int numCore) : mUse_fp16(use_fp16), mCount(count) {
     mFilenames = glob(directory);
     mFileQueue = make_unique<FileQueue>();
+    int maxCores = sysconf(_SC_NPROCESSORS_ONLN);
+    if (numCore > maxCores) {
+        cout << "The max number of core is " << maxCores << ". Using " << maxCores << " instead" << endl;
+        mCores = maxCores;
+    } else {
+        mCores = numCore;
+    }
 }
 
 Benchmark::~Benchmark() {}
 
 void Benchmark::run() {
-     // read
-    // unsigned int totalByte = 0;
-    // float totalReadTime = 0;
     int totalSize = mFilenames.size();
-    cout << "Read" << "(" << totalSize << " files)"<< endl;
-    cout << "-------------------------------------" << endl;
+    int64_t freq = clockFrequency(), t0, t1;
     for (int i = 1; i <= mCount; i++) {
+        //reset time
+        mDecodeTime = 0;
+        mConvertTime = 0;
+
+        // read
+        cout << endl << "Iteration" << i << "(" << totalSize << " files / " << mCores << " core(s))"<< endl;
+        cout << "-------------------------------------" << endl;
         readFile(i);
+
+        // decode & convert to tensor
+
+        std::vector<std::vector<std::tuple<char*, int>>> split = splitQueue(*mFileQueue, mCores);
+        vector<thread> dec_threads(mCores);
+        t0 = clockCounter();
+        for (unsigned int i=0; i<mCores; i++) {
+            dec_threads[i] = std::thread(&Benchmark::decodeFileAndConvertToTensorBatch, this, ref(split[i]));
+        }
+        for (int i=0; i<mCores; i++) {
+            dec_threads[i].join();
+        }
+        t1 = clockCounter();
+        mDecodeTime += (float)(t1-t0)*1000.0f/(float)freq;
+        cout << "Decode";
+        printResult(mDecodeTime, totalSize, 25006414);
+
+        //cout << "Convert (FP" << (mUse_fp16 ? "16" : "32") << ")";
+        //printResult(mConvertTime, totalSize, 25006414);
     }
 }
 
 void Benchmark::readFile(int iteration) {
+    int64_t freq = clockFrequency(), t0, t1;
     FILE *file;
     char *buffer;
     int totalSize = mFilenames.size();
-    unsigned int filelen;
+    int filelen;
     unsigned int byteRead = 0;
     float readTime = 0;
-    int64_t freq = clockFrequency(), t0, t1;
-
     for (int i=0; i<totalSize; i++) {
         file = fopen(mFilenames[i].c_str(), "r");
         if (file==NULL) {
@@ -53,23 +88,146 @@ void Benchmark::readFile(int iteration) {
         t1 = clockCounter();
         readTime += (float)(t1-t0)*1000.0f/(float)freq;
 
+        tuple<char*, int> image(buffer, filelen);
+        mFileQueue->enqueue(image);
         fclose(file);
-        if (iteration == 0) {
-            tuple<char*, int> image(buffer, filelen);
-            mFileQueue->enqueue(image);
-        }
     }
-    cout << readTime << endl;
-    printResult(iteration, readTime, totalSize, byteRead);
+    cout << "Read  ";
+    printResult(readTime, totalSize, byteRead);
 
     return;
 }
 
-int Benchmark::getFileSize() { return mFilenames.size();}
+void Benchmark::decodeFileAndConvertToTensorBatch(std::vector<std::tuple<char*, int>> &imageVec) {
+    for (auto itr = imageVec.begin(); itr!=imageVec.end(); itr++) {
+        std::tuple<char*, int> image = *itr;
+        char *byteStream = std::get<0>(image);
+        int size = std::get<1>(image);
+        if (byteStream == nullptr || size == 0) { 
+            break;
+        }
+        decodeFileAndConvertToTensor(byteStream, size);
+        delete[] byteStream;
+    }
+}
 
-bool Benchmark::isEmptyQueue() { return mFileQueue->isEmpty(); }
+void Benchmark::decodeFileAndConvertToTensor(char* byteStream, int size) {
+    Mat matOrig;
+    
+    // decode
+    matOrig = imdecode(Mat(1, size, CV_8UC1, byteStream), CV_LOAD_IMAGE_COLOR);
+    if (matOrig.empty()) {
+        cout << "ERROR: Image corrupted (Mat empty)" << endl;
+        exit(1);
+    }
+    
+    // conver to tensor
+    //convertToTensor(matOrig);
+    matOrig.release();
+}
 
-unsigned int Benchmark::getQueueSize() { return mFileQueue->getSize(); }
+void Benchmark::convertToTensor(Mat &matOrig) {
+    int length = matOrig.cols * matOrig.rows;
+    unsigned char * img;
+    unsigned char *data_resize = nullptr;
+    
+    int width = 224; // TODO: set width and height
+    int height = 224; // TODO: set width and height
+    
+    if ((width == matOrig.cols) && (height == matOrig.rows)) {
+        // no resize required
+        img = matOrig.data;
+    } else {
+        unsigned int aligned_size = ((length+width) * 3 + 128)&~127;
+        data_resize = new unsigned char[aligned_size];
+        RGB_resize(matOrig.data, data_resize, matOrig.cols, matOrig.rows, width, height);
+        img = data_resize;
+    }
+ 
+    __m128i mask_B, mask_G, mask_R;
+    if (reverseInputChannelOrder) {
+        mask_B = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
+        mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
+        mask_R = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
+    } else {
+        mask_R = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
+        mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
+        mask_B = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
+    }
+    int alignedLength = (length-2)& ~3;
+    if (!mUse_fp16) {
+        float * buf = (float *)malloc(sizeof(float)*1*3*length);
+        float * B_buf = buf;
+        float * G_buf = B_buf + length;
+        float * R_buf = G_buf + length;
+        int i = 0;
+
+        __m128 fR, fG, fB;
+
+        for (; i < alignedLength; i += 4) {
+            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
+            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
+            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
+            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
+            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
+            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
+            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
+            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
+            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+            _mm_storeu_ps(B_buf, fB);
+            _mm_storeu_ps(G_buf, fG);
+            _mm_storeu_ps(R_buf, fR);
+            B_buf += 4;
+            G_buf += 4;
+            R_buf += 4;
+            img += 12;
+        }
+        for (; i < length; i++, img += 3) {
+            *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
+            *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
+            *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
+        }
+    } else {
+        unsigned short * buf = (unsigned short *)malloc(sizeof(unsigned short)*1*3*length);
+        unsigned short * B_buf = (unsigned short *)buf;
+        unsigned short * G_buf = B_buf + length;
+        unsigned short * R_buf = G_buf + length;
+        int i = 0;
+
+        __m128 fR, fG, fB;
+        __m128i hR, hG, hB;
+
+        for (; i < alignedLength; i += 4) {
+            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
+            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
+            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
+            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
+            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
+            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
+            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
+            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
+            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
+            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
+            // convert to half
+            hB = _mm_cvtps_ph(fB, 0xF);
+            hG = _mm_cvtps_ph(fG, 0xF);
+            hR = _mm_cvtps_ph(fR, 0xF);
+            _mm_storel_epi64((__m128i*)B_buf, hB);
+            _mm_storel_epi64((__m128i*)G_buf, hG);
+            _mm_storel_epi64((__m128i*)R_buf, hR);
+            B_buf += 4;
+            G_buf += 4;
+            R_buf += 4;
+            img += 12;
+        }
+        for (; i < length; i++, img += 3) {
+            *B_buf++ = _cvtss_sh((float)((img[0] * preprocessMpy[0]) + preprocessAdd[0]), 1);
+            *G_buf++ = _cvtss_sh((float)((img[1] * preprocessMpy[1]) + preprocessAdd[1]), 1);
+            *R_buf++ = _cvtss_sh((float)((img[2] * preprocessMpy[2]) + preprocessAdd[2]), 1);
+        }
+    }
+}
 
 void Benchmark::RGB_resize(unsigned char *Rgb_in, unsigned char *Rgb_out, unsigned int swidth, unsigned int sheight, unsigned int dwidth, unsigned int dheight) {
     float xscale = (float)((double)swidth / (double)dwidth);
@@ -233,120 +391,4 @@ void Benchmark::RGB_resize(unsigned char *Rgb_in, unsigned char *Rgb_out, unsign
         }
     }
     if (Xmap) delete[] Xmap;
-}
-
-void Benchmark::decodeFile() {
-    tuple<char*, int> image = mFileQueue->dequeue();
-    char * byteStream = get<0>(image);
-    int size = get<1>(image);
-    Mat matOrig = imdecode(Mat(1, size, CV_8UC1, byteStream), CV_LOAD_IMAGE_UNCHANGED);
-    if (matOrig.empty()) {
-        cout << "ERROR: Image corrupted (Mat empty)" << endl;
-        exit(1);
-    }
-    convertToTensor(matOrig);
-    matOrig.release();
-}
-
-void Benchmark::convertToTensor(const Mat &matOrig) {
-    int length = matOrig.cols * matOrig.rows;
-    unsigned char * img;
-    unsigned char *data_resize = nullptr;
-    
-    int width = 224; // TODO: set width and height
-    int height = 224; // TODO: set width and height
-    
-    if ((width == matOrig.cols) && (height == matOrig.rows)) {
-        // no resize required
-        img = matOrig.data;
-    } else {
-        unsigned int aligned_size = ((length+width) * 3 + 128)&~127;
-        data_resize = new unsigned char[aligned_size];
-        RGB_resize(matOrig.data, data_resize, matOrig.cols, matOrig.rows, width, height);
-        img = data_resize;
-    }
- 
-    __m128i mask_B, mask_G, mask_R;
-    if (reverseInputChannelOrder) {
-        mask_B = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
-        mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
-        mask_R = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
-    } else {
-        mask_R = _mm_setr_epi8((char)0x0, (char)0x80, (char)0x80, (char)0x80, (char)0x3, (char)0x80, (char)0x80, (char)0x80, (char)0x6, (char)0x80, (char)0x80, (char)0x80, (char)0x9, (char)0x80, (char)0x80, (char)0x80);
-        mask_G = _mm_setr_epi8((char)0x1, (char)0x80, (char)0x80, (char)0x80, (char)0x4, (char)0x80, (char)0x80, (char)0x80, (char)0x7, (char)0x80, (char)0x80, (char)0x80, (char)0xA, (char)0x80, (char)0x80, (char)0x80);
-        mask_B = _mm_setr_epi8((char)0x2, (char)0x80, (char)0x80, (char)0x80, (char)0x5, (char)0x80, (char)0x80, (char)0x80, (char)0x8, (char)0x80, (char)0x80, (char)0x80, (char)0xB, (char)0x80, (char)0x80, (char)0x80);
-    }
-    int alignedLength = (length-2)& ~3;
-    if (!mUse_fp16) {
-        float * buf = (float *)malloc(sizeof(float)*1*3*length);
-        float * B_buf = buf;
-        float * G_buf = B_buf + length;
-        float * R_buf = G_buf + length;
-        int i = 0;
-
-        __m128 fR, fG, fB;
-
-        for (; i < alignedLength; i += 4) {
-            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
-            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
-            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
-            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
-            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
-            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
-            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
-            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
-            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
-            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
-            _mm_storeu_ps(B_buf, fB);
-            _mm_storeu_ps(G_buf, fG);
-            _mm_storeu_ps(R_buf, fR);
-            B_buf += 4;
-            G_buf += 4;
-            R_buf += 4;
-            img += 12;
-        }
-        for (; i < length; i++, img += 3) {
-            *B_buf++ = (img[0] * preprocessMpy[0]) + preprocessAdd[0];
-            *G_buf++ = (img[1] * preprocessMpy[1]) + preprocessAdd[1];
-            *R_buf++ = (img[2] * preprocessMpy[2]) + preprocessAdd[2];
-        }
-    } else {
-        unsigned short * buf = (unsigned short *)malloc(sizeof(unsigned short)*1*3*length);
-        unsigned short * B_buf = (unsigned short *)buf;
-        unsigned short * G_buf = B_buf + length;
-        unsigned short * R_buf = G_buf + length;
-        int i = 0;
-
-        __m128 fR, fG, fB;
-        __m128i hR, hG, hB;
-
-        for (; i < alignedLength; i += 4) {
-            __m128i pix0 = _mm_loadu_si128((__m128i *) img);
-            fB = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_B));
-            fG = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_G));
-            fR = _mm_cvtepi32_ps(_mm_shuffle_epi8(pix0, mask_R));
-            fB = _mm_mul_ps(fB, _mm_set1_ps(preprocessMpy[0]));
-            fG = _mm_mul_ps(fG, _mm_set1_ps(preprocessMpy[1]));
-            fR = _mm_mul_ps(fR, _mm_set1_ps(preprocessMpy[2]));
-            fB = _mm_add_ps(fB, _mm_set1_ps(preprocessAdd[0]));
-            fG = _mm_add_ps(fG, _mm_set1_ps(preprocessAdd[1]));
-            fR = _mm_add_ps(fR, _mm_set1_ps(preprocessAdd[2]));
-            // convert to half
-            hB = _mm_cvtps_ph(fB, 0xF);
-            hG = _mm_cvtps_ph(fG, 0xF);
-            hR = _mm_cvtps_ph(fR, 0xF);
-            _mm_storel_epi64((__m128i*)B_buf, hB);
-            _mm_storel_epi64((__m128i*)G_buf, hG);
-            _mm_storel_epi64((__m128i*)R_buf, hR);
-            B_buf += 4;
-            G_buf += 4;
-            R_buf += 4;
-            img += 12;
-        }
-        for (; i < length; i++, img += 3) {
-            *B_buf++ = _cvtss_sh((float)((img[0] * preprocessMpy[0]) + preprocessAdd[0]), 1);
-            *G_buf++ = _cvtss_sh((float)((img[1] * preprocessMpy[1]) + preprocessAdd[1]), 1);
-            *R_buf++ = _cvtss_sh((float)((img[2] * preprocessMpy[2]) + preprocessAdd[2]), 1);
-        }
-    }
 }

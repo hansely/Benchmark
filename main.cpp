@@ -1,34 +1,34 @@
-#include <unistd.h>
 #include "Benchmark.h"
 
 using namespace std;
+using namespace cv;
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        cout << "Usage: ./benchmark [Image Folder][Iteration Count][-f16][-s]" << endl;
+        cout << "Usage: ./benchmark [Image Folder][Iteration Count][-f16][numCore]" << endl;
         return 0;
     }
-
-    bool show = false;
+    
     bool use_fp16 = false;
 
     string dir = argv[1];
     dir.append("/");
     dir+="*";
     int count = atoi(argv[2]);
+    int numCore;
     if (argc >=5) {
         use_fp16 = true;
-        show = true;
     } else if (argc >= 4) {
         string option = argv[3];
         if (option == "-f16") {
             use_fp16 = true;
-        } else if (option == "-s") {
-            show = true;
+        }
+        else {
+            numCore = std::stoi(option);
         }
     }
 
-    Benchmark bEngine(dir, use_fp16, count);
+    Benchmark bEngine(dir, use_fp16, count, numCore);
     bEngine.run();
 
     // unsigned int totalByte = 0;
@@ -49,7 +49,6 @@ int main(int argc, char **argv) {
     // }
     // printAverage(0, totalReadTime/count, benchmark.getFileSize(), totalByte/count);
 
-    // int num_of_cores = sysconf(_SC_NPROCESSORS_ONLN);
     // cout << "The total number of threads: "<< num_of_cores << endl << endl;
 
     // // decode & convert to tensor
@@ -94,6 +93,6 @@ int main(int argc, char **argv) {
     //     printf("Decode with %d core(s)\n", cores);
     //     printAverage(1, avgdecode, (int)buffers.size(), totalbyte);
     // }
-    cout << "done" << endl;
+    cout << endl << "Done" << endl;
     return 0;
 }
